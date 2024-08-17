@@ -1,0 +1,32 @@
+load("@gazelle//:def.bzl", "gazelle")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+# gazelle:prefix github.com/imeyer/smart-dns-updater
+gazelle(name = "gazelle")
+
+go_library(
+    name = "smart-dns-updater_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/imeyer/smart-dns-updater",
+    visibility = ["//visibility:private"],
+    deps = ["@com_github_miekg_dns//:dns"],
+)
+
+go_binary(
+    name = "smart-dns-updater",
+    embed = [":smart-dns-updater_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "smart-dns-updater_test",
+    srcs = ["main_test.go"],
+    embed = [":smart-dns-updater_lib"],
+    size = "small",
+    deps = [
+        "@com_github_miekg_dns//:dns",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)
