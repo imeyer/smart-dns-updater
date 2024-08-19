@@ -9,7 +9,15 @@ go_library(
     srcs = ["main.go"],
     importpath = "github.com/imeyer/smart-dns-updater",
     visibility = ["//visibility:private"],
-    deps = ["@com_github_miekg_dns//:dns"],
+    x_defs = {
+        "version": "{STABLE_VERSION}",
+        "gitSha": "{STABLE_GIT_SHA}",
+    },
+    deps = [
+        "@com_github_miekg_dns//:dns",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_golang//prometheus/promhttp",
+    ],
 )
 
 go_binary(
@@ -20,9 +28,9 @@ go_binary(
 
 go_test(
     name = "smart-dns-updater_test",
+    size = "small",
     srcs = ["main_test.go"],
     embed = [":smart-dns-updater_lib"],
-    size = "small",
     deps = [
         "@com_github_miekg_dns//:dns",
         "@com_github_stretchr_testify//assert",
