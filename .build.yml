@@ -1,0 +1,20 @@
+# For builds.sr.ht
+image: fedora/40
+sources:
+  - https://git.sr.ht/~imeyer/smart-dns-updater
+packages:
+  - wget
+  - tar
+environment:
+  path: "$PATH:$HOME/.local/go/bin"
+tasks:
+  - install_bazelisk: |
+      wget -O $HOME/.local/bin/bazelisk https://github.com/bazelbuild/bazelisk/releases/download/v1.20.0/bazelisk-linux-amd64
+      chmod +x $HOME/.local/bin/bazelisk
+  - install_go: |
+      rm -rf $HOME/.local/go && curl -L https://go.dev/dl/go1.23.0.linux-amd64.tar.gz | tar -C $HOME/.local -xzf-
+  - run_tests: |
+      cd smart-dns-updater
+      PATH="${PATH}:$HOME/.local/go/bin" bazelisk test --stamp --workspace_status_command=$PWD/status.sh //...
+  - build_binary: |
+      PATH="${PATH}:$HOME/.local/go/bin" bazelisk build --stamp --workspace_status_command=$PWD/status.sh //:smart-dns-updater
