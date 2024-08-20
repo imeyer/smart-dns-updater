@@ -1,2 +1,3 @@
 smart-dns-updater
 bazel-*
+.bazelrc
