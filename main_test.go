@@ -16,7 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var testZone string = "myip.opendns.com."
+var (
+	testZone string = "myip.opendns.com."
+	timeout  int    = 5
+)
 
 // MockDNSClient is a mock implementation of the DNSClient interface
 type MockDNSClient struct {
