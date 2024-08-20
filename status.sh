@@ -7,4 +7,4 @@ then
 fi
 
 echo "STABLE_GIT_SHA ${git_sha}"
-echo "STABLE_VERSION v0.0.2"
+echo "STABLE_VERSION v0.0.4"
