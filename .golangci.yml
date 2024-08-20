@@ -1,0 +1,24 @@
+# For documentation, see https://golangci-lint.run/usage/configuration/
+run:
+
+linters:
+  enable:
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - containedctx
+    - contextcheck
+    - decorder
+    - dupl
+    - dupword
+    - errname
+    - errorlint
+    - gofumpt
+    - gosec
+    - nosprintfhostport
+    - promlinter
+    - sloglint
+    - staticcheck
+    - tenv
+    - unconvert
+    - unparam
