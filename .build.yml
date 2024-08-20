@@ -17,4 +17,5 @@ tasks:
       cd smart-dns-updater
       PATH="${PATH}:$HOME/.local/go/bin" bazelisk test --stamp --workspace_status_command=$PWD/status.sh //...
   - build_binary: |
+      cd smart-dns-updater
       PATH="${PATH}:$HOME/.local/go/bin" bazelisk build --stamp --workspace_status_command=$PWD/status.sh //:smart-dns-updater
