@@ -1,3 +1,4 @@
 smart-dns-updater
 bazel-*
 .bazelrc
+smart-dns-updater.toml
