@@ -18,6 +18,7 @@ go_library(
         "@com_github_miekg_dns//:dns",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/promhttp",
+        "@org_golang_google_api//dns/v1:dns",
     ],
 )
 

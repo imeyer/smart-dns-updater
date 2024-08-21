@@ -72,7 +72,7 @@ func TestFetchIPViaDNS(t *testing.T) {
 	).Return(response, time.Duration(0), nil)
 
 	// Call the function under test
-	ip, err := FetchIPViaDNS(ctx, mockClient, testZone)
+	ip, err := fetchIPViaDNS(ctx, mockClient, testZone)
 
 	// Verify the results
 	require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestFetchIPViaDNS_EmptyARecord(t *testing.T) {
 	).Return(response, time.Duration(0), nil)
 
 	// Call the function under test
-	ip, err := FetchIPViaDNS(ctx, mockClient, testZone)
+	ip, err := fetchIPViaDNS(ctx, mockClient, testZone)
 
 	// Verify the results
 	require.Error(t, err)
@@ -145,7 +145,7 @@ func TestFetchIPViaDNS_Error(t *testing.T) {
 	).Return(response, time.Duration(0), nil)
 
 	// Call the function under test
-	ip, err := FetchIPViaDNS(ctx, mockClient, testZone)
+	ip, err := fetchIPViaDNS(ctx, mockClient, testZone)
 
 	// Verify the results
 	require.Error(t, err)
@@ -174,7 +174,7 @@ func TestFetchIPViaDNS_Timeout(t *testing.T) {
 	)
 
 	// Call the function under test
-	ip, err := FetchIPViaDNS(ctx, mockClient, testZone)
+	ip, err := fetchIPViaDNS(ctx, mockClient, testZone)
 
 	// Verify that a timeout error is returned
 	require.Error(t, err)
@@ -202,7 +202,7 @@ func TestFetchIPViaDNS_NetworkError(t *testing.T) {
 
 	mockClient.On("ExchangeContext", msg, "resolver1.opendns.com:53").Return((*dns.Msg)(nil), time.Duration(0), errors.New("network error"))
 
-	ip, err := FetchIPViaDNS(ctx, mockClient, testZone)
+	ip, err := fetchIPViaDNS(ctx, mockClient, testZone)
 	require.Error(t, err)
 	assert.Empty(t, ip)
 	assert.Contains(t, err.Error(), "network error")
@@ -229,7 +229,7 @@ func TestFetchIPViaDNS_IncorrectAddress(t *testing.T) {
 		errors.New("unreachable"),
 	)
 
-	ip, err := FetchIPViaDNS(ctx, mockClient, testZone)
+	ip, err := fetchIPViaDNS(ctx, mockClient, testZone)
 	require.Error(t, err)
 	assert.Empty(t, ip)
 	assert.Contains(t, err.Error(), "unreachable")
@@ -254,7 +254,7 @@ func TestFetchIPViaHTTP(t *testing.T) {
 	mockClient.On("Do", mock.Anything).Return(response, nil)
 
 	// Call the function under test
-	ip, err := FetchIPViaHTTP(ctx, mockClient)
+	ip, err := fetchIPViaHTTP(ctx, mockClient)
 
 	// Verify the results
 	require.NoError(t, err)
@@ -277,7 +277,7 @@ func TestFetchIPViaHTTP_Error(t *testing.T) {
 	)
 
 	// Call the function under test
-	ip, err := FetchIPViaHTTP(ctx, mockClient)
+	ip, err := fetchIPViaHTTP(ctx, mockClient)
 
 	// Verify the results
 	require.Error(t, err)
@@ -298,7 +298,7 @@ func TestFetchIPViaHTTP_Non200Status(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader(http.StatusText(http.StatusInternalServerError))),
 	}, nil)
 
-	ip, err := FetchIPViaHTTP(ctx, mockClient)
+	ip, err := fetchIPViaHTTP(ctx, mockClient)
 	require.Error(t, err)
 	assert.Empty(t, ip)
 	assert.Contains(t, err.Error(), "unexpected status code")
@@ -321,7 +321,7 @@ func TestFetchIPViaHTTP_BodyReadError(t *testing.T) {
 
 	mockClient.On("Do", mock.Anything).Return(response, nil)
 
-	ip, err := FetchIPViaHTTP(ctx, mockClient)
+	ip, err := fetchIPViaHTTP(ctx, mockClient)
 	require.Error(t, err)
 	assert.Empty(t, ip)
 	assert.Contains(t, err.Error(), "failed to read response body")

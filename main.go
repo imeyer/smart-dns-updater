@@ -18,6 +18,8 @@ import (
 	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	gdns "google.golang.org/api/dns/v1"
 )
 
 var (
@@ -34,7 +36,7 @@ var (
 	isIPOutOfSyncDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "smart_dns_updater",
-			Name:      "is_out_of_sync_duration",
+			Name:      "is_out_of_sync_duration_seconds",
 			Help:      "Duration of the isIPOutOfSync function",
 			Buckets:   prometheus.DefBuckets,
 		},
@@ -49,19 +51,34 @@ var (
 		[]string{"fetch_method"},
 	)
 
-	outOfSync = prometheus.NewGaugeVec(
+	updateErrors = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "smart_dns_updater",
+			Name:      "dns_updates_errors_total",
+			Help:      "Total number of dns update errors",
+		},
+	)
+
+	updatesApplied = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "smart_dns_updater",
+			Name:      "dns_updates_applied_total",
+			Help:      "Total number of dns updates applied",
+		},
+	)
+
+	outOfSync = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "smart_dns_updater",
 			Name:      "out_of_sync",
-			Help:      "Total number of fetch errors by method",
+			Help:      "Is DNS out of sync",
 		},
-		[]string{"preferred_response"},
 	)
 
 	versionGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "smart_dns_updater",
 		Name:      "build_info",
-		Help:      "A gauge with version and git commit information",
+		Help:      "smart-dns-updater build information",
 	}, []string{"version", "git_commit"})
 
 	// Build information
@@ -76,6 +93,8 @@ func init() {
 	prometheus.MustRegister(isIPOutOfSyncDuration)
 	prometheus.MustRegister(fetchErrors)
 	prometheus.MustRegister(outOfSync)
+	prometheus.MustRegister(updateErrors)
+	prometheus.MustRegister(updatesApplied)
 	prometheus.MustRegister(versionGauge)
 
 	versionGauge.With(prometheus.Labels{"version": version, "git_commit": gitSha}).Set(1)
@@ -83,6 +102,10 @@ func init() {
 	// Initialize the error counters to 0
 	fetchErrors.WithLabelValues("dns").Add(0)
 	fetchErrors.WithLabelValues("http").Add(0)
+	updateErrors.Add(0)
+
+	// Initialize update counter to 0
+	updatesApplied.Add(0)
 }
 
 type Config struct {
@@ -106,7 +129,7 @@ type HTTPClient interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-func FetchIPViaDNS(ctx context.Context, client DNSClient, question string) (string, error) {
+func fetchIPViaDNS(ctx context.Context, client DNSClient, question string) (string, error) {
 	timer := prometheus.NewTimer(fetchDuration.WithLabelValues("dns"))
 	defer timer.ObserveDuration()
 
@@ -128,7 +151,7 @@ func FetchIPViaDNS(ctx context.Context, client DNSClient, question string) (stri
 	return r.Answer[0].(*dns.A).A.String(), nil
 }
 
-func FetchIPViaHTTP(ctx context.Context, client HTTPClient) (string, error) {
+func fetchIPViaHTTP(ctx context.Context, client HTTPClient) (string, error) {
 	timer := prometheus.NewTimer(fetchDuration.WithLabelValues("http"))
 	defer timer.ObserveDuration()
 
@@ -155,6 +178,166 @@ func FetchIPViaHTTP(ctx context.Context, client HTTPClient) (string, error) {
 	return strings.TrimSpace(string(body)), nil
 }
 
+func loadConfig(configPath string) (*Config, error) {
+	config := &Config{}
+	configFile, err := os.Open(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("could not open config file: %w", err)
+	}
+	defer configFile.Close()
+
+	decoder := toml.NewDecoder(configFile)
+	if _, err := decoder.Decode(config); err != nil {
+		return nil, fmt.Errorf("could not decode config file: %w", err)
+	}
+	return config, nil
+}
+
+func newLogger(logLevel *slog.Level) *slog.Logger {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		AddSource: true,
+		Level:     logLevel,
+	}))
+	slog.SetDefault(logger)
+
+	return logger
+}
+
+func reconcileDns(httpClient HTTPClient, dnsClient DNSClient, config *Config, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(config.Timeout)*time.Second,
+	)
+
+	// Synchronize the fetch calls
+	var wg sync.WaitGroup
+	var dnsIp, prodIp, httpIp string
+	var dnsErr, prodErr, httpErr error
+
+	wg.Add(3)
+
+	// Fetch IP via DNS for my production domain
+	go func() {
+		defer wg.Done()
+		prodIp, prodErr = fetchIPViaDNS(ctx, dnsClient, "imeyer.io.")
+		if dnsErr != nil {
+			logger.Error("error fetching IP from DNS", "error", prodErr)
+		}
+	}()
+
+	// Fetch IP via DNS
+	go func() {
+		defer wg.Done()
+		dnsIp, dnsErr = fetchIPViaDNS(ctx, dnsClient, "myip.opendns.com.")
+		if dnsErr != nil {
+			logger.Error("error fetching IP from DNS", "error", dnsErr)
+		}
+	}()
+
+	// Fetch IP via HTTP
+	go func() {
+		defer wg.Done()
+		httpIp, httpErr = fetchIPViaHTTP(ctx, httpClient)
+		if httpErr != nil {
+			logger.Error("error fetching IP from HTTP", "error", httpErr)
+		}
+	}()
+
+	// Wait for all goroutines to finish
+	wg.Wait()
+
+	// After all goroutines have returned, compare the results if no errors
+	if dnsErr == nil && httpErr == nil && prodErr == nil {
+		if ip, outofsync := isIPOutOfSync(dnsIp, httpIp, prodIp, config.PreferredResponse, logger); outofsync {
+			logger.Info("ips out of sync", "prod_ip", prodIp, "fetched_ip", ip)
+			if err := updateDNS(config, ip, logger); err != nil {
+				logger.Error(err.Error())
+			}
+		} else {
+			logger.Info("all IPs match", "dns_ip", dnsIp, "http_ip", httpIp, "prod_ip", prodIp)
+		}
+	} else {
+		logger.Error("errors in responses", "dns_err", dnsErr, "http_err", httpErr, "prod_err", prodErr)
+	}
+
+	// Cancel the context
+	cancel()
+}
+
+func updateDNS(config *Config, ip string, logger *slog.Logger) error {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(config.Timeout)*time.Second,
+	)
+	defer cancel()
+
+	if ip == "" {
+		return fmt.Errorf("ip is empty")
+	}
+
+	client, err := gdns.NewService(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create DNS client: %v", err)
+	}
+
+	rrs := []*gdns.ResourceRecordSet{
+		{
+			Name:    config.RecordName,
+			Rrdatas: []string{ip},
+			Type:    "A",
+			Ttl:     3600,
+		},
+	}
+
+	resp, err := client.ResourceRecordSets.List(config.ProjectID, config.Zone).Name(config.RecordName).Type("A").Do()
+	if err != nil {
+		return fmt.Errorf("failed to list DNS records: %v", err)
+	}
+
+	changes := &gdns.Change{
+		Additions: rrs,
+		Deletions: resp.Rrsets,
+	}
+
+	_, err = client.Changes.Create(config.ProjectID, config.Zone, changes).Context(ctx).Do()
+	if err != nil {
+		updateErrors.Inc()
+		return fmt.Errorf("failed to update DNS: %v", err)
+	}
+
+	logger.Info("dns changes applied", "record", config.RecordName, "ip", ip)
+	updatesApplied.Inc()
+	return nil
+}
+
+func isIPOutOfSync(dns, http, prod, preferred string, logger *slog.Logger) (string, bool) {
+	timer := prometheus.NewTimer(isIPOutOfSyncDuration)
+	defer timer.ObserveDuration()
+
+	if dns != http {
+		logger.Warn("DNS and HTTP IPs do not match", "dns", dns, "http", http)
+	}
+
+	var finalIp string
+
+	switch preferred {
+	case "dns":
+		finalIp = dns
+	case "http":
+		finalIp = http
+	default:
+		finalIp = ""
+	}
+
+	if prod != finalIp {
+		outOfSync.Set(1)
+		return finalIp, true
+	}
+
+	outOfSync.Set(0)
+	return "", false
+}
+
 func main() {
 	var configPath string
 	var debug bool
@@ -171,7 +354,7 @@ func main() {
 
 	logger.Info("starting smart-dns-updater", "version", version, "git_sha", gitSha)
 
-	config, err := LoadConfig(configPath)
+	config, err := loadConfig(configPath)
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
 		os.Exit(1)
@@ -230,116 +413,4 @@ func main() {
 			reconcileDns(httpClient, dnsClient, config, logger)
 		}
 	}
-}
-
-func newLogger(logLevel *slog.Level) *slog.Logger {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		AddSource: true,
-		Level:     logLevel,
-	}))
-	slog.SetDefault(logger)
-
-	return logger
-}
-
-func LoadConfig(configPath string) (*Config, error) {
-	config := &Config{}
-	configFile, err := os.Open(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("could not open config file: %w", err)
-	}
-	defer configFile.Close()
-
-	decoder := toml.NewDecoder(configFile)
-	if _, err := decoder.Decode(config); err != nil {
-		return nil, fmt.Errorf("could not decode config file: %w", err)
-	}
-	return config, nil
-}
-
-func reconcileDns(httpClient HTTPClient, dnsClient DNSClient, config *Config, logger *slog.Logger) {
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		time.Duration(config.Timeout)*time.Second,
-	)
-
-	// Synchronize the fetch calls
-	var wg sync.WaitGroup
-	var dnsIp, prodIp, httpIp string
-	var dnsErr, prodErr, httpErr error
-
-	wg.Add(3)
-
-	// Fetch IP via DNS for my production domain
-	go func() {
-		defer wg.Done()
-		prodIp, prodErr = FetchIPViaDNS(ctx, dnsClient, "imeyer.io.")
-		if dnsErr != nil {
-			logger.Error("error fetching IP from DNS", "error", prodErr)
-		}
-	}()
-
-	// Fetch IP via DNS
-	go func() {
-		defer wg.Done()
-		dnsIp, dnsErr = FetchIPViaDNS(ctx, dnsClient, "myip.opendns.com.")
-		if dnsErr != nil {
-			logger.Error("error fetching IP from DNS", "error", dnsErr)
-		}
-	}()
-
-	// Fetch IP via HTTP
-	go func() {
-		defer wg.Done()
-		httpIp, httpErr = FetchIPViaHTTP(ctx, httpClient)
-		if httpErr != nil {
-			logger.Error("error fetching IP from HTTP", "error", httpErr)
-		}
-	}()
-
-	// Wait for all goroutines to finish
-	wg.Wait()
-
-	// Cancel the context
-	cancel()
-
-	// After all goroutines have returned, compare the results if no errors
-	if dnsErr == nil && httpErr == nil && prodErr == nil {
-		logger.Info("fetched prod ip", "prod_ip", prodIp)
-		if ip, outofsync := isIPOutOfSync(dnsIp, httpIp, prodIp, config.PreferredResponse, config, logger); outofsync {
-			logger.Info("ips out of sync", "prod_ip", prodIp, "fetched_ip", ip)
-		}
-	} else {
-		logger.Error("errors in responses", "dns_err", dnsErr, "http_err", httpErr, "prod_err", prodErr)
-	}
-
-	// TODO: func UpdateDNS() {}
-}
-
-func isIPOutOfSync(dns, http, prod, preferred string, config *Config, logger *slog.Logger) (string, bool) {
-	timer := prometheus.NewTimer(isIPOutOfSyncDuration)
-	defer timer.ObserveDuration()
-
-	if dns != http {
-		logger.Warn("DNS and HTTP IPs do not match", "dns", dns, "http", http)
-	}
-
-	var finalIp string
-
-	switch preferred {
-	case "dns":
-		finalIp = dns
-	case "http":
-		finalIp = http
-	default:
-		finalIp = ""
-	}
-
-	if prod != finalIp {
-		outOfSync.With(prometheus.Labels{"preferred_response": config.PreferredResponse}).Set(1)
-		return finalIp, true
-	}
-
-	outOfSync.With(prometheus.Labels{"preferred_response": config.PreferredResponse}).Set(0)
-	return "", false
 }
