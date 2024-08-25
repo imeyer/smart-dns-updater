@@ -2,13 +2,15 @@ name: Test
 run-name: Test
 on:
   push:
+    branches: [main]
   pull_request:
     paths:
       - "!README.md"
       - "!LICENSE"
 
 jobs:
-  Test:
+  test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - name: Check out smart-dns-updater

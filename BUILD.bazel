@@ -1,13 +1,18 @@
 load("@gazelle//:def.bzl", "gazelle")
-load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+load("helper.bzl", "cross_compile_binary")
+load("platforms.bzl", "PLATFORMS")
+
+# Name of the binary
+NAME = "smart-dns-updater"
 
 # gazelle:prefix github.com/imeyer/smart-dns-updater
 gazelle(name = "gazelle")
 
 go_library(
-    name = "smart-dns-updater_lib",
+    name = "{}_lib".format(NAME),
     srcs = ["main.go"],
-    importpath = "github.com/imeyer/smart-dns-updater",
+    importpath = "github.com/imeyer/{}".format(NAME),
     visibility = ["//visibility:private"],
     x_defs = {
         "version": "{STABLE_VERSION}",
@@ -22,17 +27,18 @@ go_library(
     ],
 )
 
-go_binary(
-    name = "smart-dns-updater",
-    embed = [":smart-dns-updater_lib"],
-    visibility = ["//visibility:public"],
-)
+# Create go_binary targets for each platform-arch combination
+[cross_compile_binary(
+    name = NAME,
+    goarch = goarch,
+    goos = goos,
+) for (goos, goarch) in PLATFORMS]
 
 go_test(
-    name = "smart-dns-updater_test",
+    name = "{}_test".format(NAME),
     size = "small",
     srcs = ["main_test.go"],
-    embed = [":smart-dns-updater_lib"],
+    embed = [":{}_lib".format(NAME)],
     deps = [
         "@com_github_miekg_dns//:dns",
         "@com_github_stretchr_testify//assert",
