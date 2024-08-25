@@ -6,9 +6,14 @@ jobs:
   build:
     strategy:
       matrix:
-        goos: [linux, darwin]
+        os: [ubuntu-latest, macos-latest]
         goarch: [arm64, amd64]
-    runs-on: ${{ matrix.goos }}
+        include:
+          - os: ubuntu-latest
+            goos: linux
+          - os: macos-latest
+            goos: darwin
+    runs-on: ${{ matrix.os }}
     steps:
     - name: Check out smart-dns-updater
       uses: actions/checkout@v4
