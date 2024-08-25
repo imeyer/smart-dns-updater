@@ -47,4 +47,4 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            smart-dns-updater_*
+            ${{ github.workspace }}/smart-dns-updater_*
